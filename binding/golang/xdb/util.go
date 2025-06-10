@@ -9,7 +9,9 @@
 package xdb
 
 import (
+	"embed"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -176,6 +178,23 @@ func LoadContentFromFile(dbFile string) ([]byte, error) {
 	cBuff, err := LoadContent(handle)
 	if err != nil {
 		return nil, err
+	}
+
+	return cBuff, nil
+}
+
+// LoadContentFromFS load the whole xdb binary from embed.FS
+func LoadContentFromFS(fs embed.FS, filePath string) ([]byte, error) {
+	file, err := fs.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open embedded file `%s`: %w", filePath, err)
+	}
+	defer file.Close()
+
+	var cBuff []byte
+	cBuff, err = io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read embedded file `%s`: %w", filePath, err)
 	}
 
 	return cBuff, nil
