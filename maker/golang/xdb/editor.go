@@ -14,6 +14,8 @@ import (
 )
 
 type Editor struct {
+	verison *Version
+
 	// source ip file
 	srcPath   string
 	srcHandle *os.File
@@ -23,7 +25,7 @@ type Editor struct {
 	segments *list.List
 }
 
-func NewEditor(srcFile string) (*Editor, error) {
+func NewEditor(version *Version, srcFile string) (*Editor, error) {
 	// check the src and dst file
 	srcPath, err := filepath.Abs(srcFile)
 	if err != nil {
@@ -36,6 +38,7 @@ func NewEditor(srcFile string) (*Editor, error) {
 	}
 
 	e := &Editor{
+		verison:   version,
 		srcPath:   srcPath,
 		srcHandle: srcHandle,
 		toSave:    false,
@@ -56,7 +59,12 @@ func (e *Editor) loadSegments() error {
 
 	var iErr = IterateSegments(e.srcHandle, func(l string) {
 		// do nothing here
-	}, func(seg *Segment) error {
+	}, nil, func(seg *Segment) error {
+		// version check
+		if len(seg.StartIP) != e.verison.Bytes {
+			return fmt.Errorf("invalid ip segment(%s expected)", e.verison.Name)
+		}
+
 		// check the continuity of the data segment
 		if err := seg.AfterCheck(last); err != nil {
 			return err
@@ -120,11 +128,13 @@ func (e *Editor) Put(ip string) (int, int, error) {
 // the following position relationships.
 // 1, A - fully contained like:
 // StartIP------seg.StartIP--------seg.EndIP----EndIP
-//                 |------------------|
+//
+//	|------------------|
+//
 // 2, B - intersect like:
 // StartIP------seg.StartIP------EndIP------|
-//                 |---------------------seg.EndIP
 //
+//	|---------------------seg.EndIP
 func (e *Editor) PutSegment(seg *Segment) (int, int, error) {
 	var next *list.Element
 	var eList []*list.Element
@@ -138,16 +148,16 @@ func (e *Editor) PutSegment(seg *Segment) (int, int, error) {
 		}
 
 		// found the related segment
-		if seg.StartIP <= s.EndIP && seg.StartIP >= s.StartIP {
+		if IPCompare(seg.StartIP, s.EndIP) <= 0 && IPCompare(seg.StartIP, s.StartIP) >= 0 {
 			found = true
 		}
 
-		if found == false {
+		if !found {
 			continue
 		}
 
 		eList = append(eList, ele)
-		if seg.EndIP <= s.EndIP {
+		if IPCompare(seg.EndIP, s.EndIP) <= 0 {
 			break
 		}
 	}
@@ -167,10 +177,10 @@ func (e *Editor) PutSegment(seg *Segment) (int, int, error) {
 	// segment split
 	var sList []*Segment
 	var head = eList[0].Value.(*Segment)
-	if seg.StartIP > head.StartIP {
+	if IPCompare(seg.StartIP, head.StartIP) > 0 {
 		sList = append(sList, &Segment{
 			StartIP: head.StartIP,
-			EndIP:   seg.StartIP - 1,
+			EndIP:   IPSubOne(seg.StartIP),
 			Region:  head.Region,
 		})
 	}
@@ -182,9 +192,9 @@ func (e *Editor) PutSegment(seg *Segment) (int, int, error) {
 	if len(sList) > 0 {
 		// check and append the tailing
 		var tail = eList[len(eList)-1].Value.(*Segment)
-		if seg.EndIP < tail.EndIP {
+		if IPCompare(seg.EndIP, tail.EndIP) < 0 {
 			sList = append(sList, &Segment{
-				StartIP: seg.EndIP + 1,
+				StartIP: IPAddOne(seg.EndIP),
 				EndIP:   tail.EndIP,
 				Region:  tail.Region,
 			})
@@ -230,7 +240,7 @@ func (e *Editor) PutFile(src string) (int, int, error) {
 	var oldRows, newRows = 0, 0
 	iErr := IterateSegments(handle, func(l string) {
 		// do nothing here
-	}, func(seg *Segment) error {
+	}, nil, func(seg *Segment) error {
 		o, n, err := e.PutSegment(seg)
 		if err == nil {
 			oldRows += o
@@ -249,7 +259,7 @@ func (e *Editor) PutFile(src string) (int, int, error) {
 
 func (e *Editor) Save() error {
 	// check the to-save flag
-	if e.toSave == false {
+	if !e.toSave {
 		return fmt.Errorf("nothing changed")
 	}
 
@@ -268,8 +278,9 @@ func (e *Editor) Save() error {
 			continue
 		}
 
-		var l = s.String()
-		_, err = dstHandle.WriteString(fmt.Sprintf("%s\n", l))
+		// var l = s.String()
+		// _, err = dstHandle.WriteString(fmt.Sprintf("%s\n", l))
+		_, err = fmt.Fprintln(dstHandle, s.String())
 		if err != nil {
 			return err
 		}
